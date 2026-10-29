@@ -1,0 +1,21 @@
+---
+# ノード2: 事前チェック
+# 学習ポイント: このジョブの成否で分岐する（success / failure）
+#   - force_fail はワークフローのサーベイで指定する（yes で失敗させる）
+#   - build_id は 01 の set_stats から自動で届く
+- name: "02 check"
+  hosts: all
+  gather_facts: false
+  vars:
+    force_fail: "no"
+  tasks:
+    - name: 前ノードから届いた値を確認
+      ansible.builtin.debug:
+        msg: "受け取った build_id={{ build_id | default('（届いていない）') }} / force_fail={{ force_fail }}"
+
+    - name: チェック（force_fail=yes なら失敗 → failure 経路へ）
+      ansible.builtin.assert:
+        that:
+          - not (force_fail | bool)
+        fail_msg: "事前チェックNG（わざと失敗させています）"
+        success_msg: "事前チェックOK"

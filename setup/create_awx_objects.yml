@@ -1,0 +1,141 @@
+---
+# AWX にサンプル一式を作る（何度流しても同じ状態になる = 冪等）
+#
+# 事前準備:
+#   ansible-galaxy collection install awx.awx
+#   export CONTROLLER_HOST=https://awx.example.local
+#   export CONTROLLER_USERNAME=admin
+#   export CONTROLLER_PASSWORD='xxxxx'
+#   export CONTROLLER_VERIFY_SSL=false     # 自己署名証明書なら
+#
+# 実行:
+#   ansible-playbook setup/create_awx_objects.yml -e scm_url=https://github.com/<you>/awx-workflow-sample.git
+#
+- name: AWX ワークフローサンプル作成
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    org: Default
+    prefix: wf-sample
+    scm_url: "https://github.com/CHANGE_ME/awx-workflow-sample.git"
+    scm_branch: main
+    # ジョブテンプレート名 → プレイブック の対応
+    job_templates:
+      - { name: "{{ prefix }}-01-prepare",  playbook: playbooks/01_prepare.yml }
+      - { name: "{{ prefix }}-02-check",    playbook: playbooks/02_check.yml }
+      - { name: "{{ prefix }}-03-deploy",   playbook: playbooks/03_deploy.yml }
+      - { name: "{{ prefix }}-04-rollback", playbook: playbooks/04_rollback.yml }
+      - { name: "{{ prefix }}-05-report",   playbook: playbooks/05_report.yml }
+
+  tasks:
+    # ---------- 土台 ----------
+    - name: インベントリ
+      awx.awx.inventory:
+        name: "{{ prefix }}-inv"
+        organization: "{{ org }}"
+        state: present
+
+    - name: ホスト localhost（実行環境コンテナ内で動かす）
+      awx.awx.host:
+        name: localhost
+        inventory: "{{ prefix }}-inv"
+        variables:
+          ansible_connection: local
+        state: present
+
+    - name: プロジェクト（Git からプレイブックを取得）
+      awx.awx.project:
+        name: "{{ prefix }}-project"
+        organization: "{{ org }}"
+        scm_type: git
+        scm_url: "{{ scm_url }}"
+        scm_branch: "{{ scm_branch }}"
+        scm_update_on_launch: true
+        wait: true            # 同期完了を待たないと JT 作成でプレイブックが見つからない
+        state: present
+
+    # ---------- 部品（ジョブテンプレート） ----------
+    - name: ジョブテンプレート 5個
+      awx.awx.job_template:
+        name: "{{ item.name }}"
+        organization: "{{ org }}"
+        project: "{{ prefix }}-project"
+        inventory: "{{ prefix }}-inv"
+        playbook: "{{ item.playbook }}"
+        state: present
+      loop: "{{ job_templates }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # ---------- 組み立て（ワークフロー） ----------
+    - name: ワークフロー
+      awx.awx.workflow_job_template:
+        name: "{{ prefix }}-workflow"
+        organization: "{{ org }}"
+        inventory: "{{ prefix }}-inv"
+        # サーベイ: 実行時に「事前チェックを失敗させるか」を選ぶ
+        survey_enabled: true
+        survey_spec:
+          name: ""
+          description: ""
+          spec:
+            - question_name: "事前チェックをわざと失敗させる？"
+              variable: force_fail
+              type: multiplechoice
+              choices: ["no", "yes"]
+              default: "no"
+              required: true
+        destroy_current_nodes: true     # 流し直すたびにノード構成を作り直す
+        workflow_nodes:
+          - identifier: prepare
+            unified_job_template:
+              name: "{{ prefix }}-01-prepare"
+              type: job_template
+              organization: { name: "{{ org }}" }
+            related:
+              success_nodes: [{ identifier: check }]
+
+          - identifier: check
+            unified_job_template:
+              name: "{{ prefix }}-02-check"
+              type: job_template
+              organization: { name: "{{ org }}" }
+            related:
+              success_nodes: [{ identifier: approve }]
+              failure_nodes: [{ identifier: rollback }]
+
+          - identifier: approve
+            unified_job_template:
+              name: "{{ prefix }}-approve"
+              type: workflow_approval
+              description: "本作業に進んでよいか？"
+              timeout: 600          # 秒。放置すると timeout → failure 扱い
+            related:
+              success_nodes: [{ identifier: deploy }]      # Approve
+              failure_nodes: [{ identifier: rollback }]    # Deny / Timeout
+
+          - identifier: deploy
+            unified_job_template:
+              name: "{{ prefix }}-03-deploy"
+              type: job_template
+              organization: { name: "{{ org }}" }
+            related:
+              success_nodes: [{ identifier: report }]
+              failure_nodes: [{ identifier: rollback }]
+
+          - identifier: rollback
+            unified_job_template:
+              name: "{{ prefix }}-04-rollback"
+              type: job_template
+              organization: { name: "{{ org }}" }
+            related:
+              always_nodes: [{ identifier: report }]
+
+          - identifier: report
+            all_parents_must_converge: false   # どれか1つの親から到達すれば走る
+            unified_job_template:
+              name: "{{ prefix }}-05-report"
+              type: job_template
+              organization: { name: "{{ org }}" }
+        state: present

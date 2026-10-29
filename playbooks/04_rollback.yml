@@ -1,0 +1,15 @@
+---
+# ノード4: 切り戻し（どこかが失敗・承認拒否されたときだけ走る）
+- name: "04 rollback"
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: 切り戻しのつもり
+      ansible.builtin.debug:
+        msg: "切り戻し実行: build_id={{ build_id | default('（届いていない）') }}"
+
+    - name: 結果を後続へ渡す
+      ansible.builtin.set_stats:
+        data:
+          deploy_result: "ROLLED_BACK"
+        per_host: false

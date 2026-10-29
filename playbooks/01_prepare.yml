@@ -1,0 +1,23 @@
+---
+# ノード1: 準備
+# 学習ポイント: set_stats で「後続ノードへ値を渡す」
+#   - set_stats の data は AWX ではジョブの artifacts になり、
+#     ワークフローの後続ノードに extra_vars として自動で渡る
+#   - per_host: false にしないと AWX で拾えないので必須
+- name: "01 prepare"
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: ビルドIDを作る（実行時刻ベース）
+      ansible.builtin.set_fact:
+        build_id: "build-{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+
+    - name: 後続ノードへ渡す（= artifacts）
+      ansible.builtin.set_stats:
+        data:
+          build_id: "{{ build_id }}"
+        per_host: false
+
+    - name: 表示
+      ansible.builtin.debug:
+        msg: "準備完了: build_id={{ build_id }}"

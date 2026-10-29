@@ -1,0 +1,16 @@
+---
+# ノード3: 本作業（承認ノードで Approve された後だけ走る）
+# 学習ポイント: 後続へさらに値を追加で渡す（artifacts は下流に積み上がる）
+- name: "03 deploy"
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: 本作業のつもり
+      ansible.builtin.debug:
+        msg: "デプロイ実行: build_id={{ build_id | default('（届いていない）') }}"
+
+    - name: 結果を後続へ渡す
+      ansible.builtin.set_stats:
+        data:
+          deploy_result: "OK"
+        per_host: false

@@ -1,0 +1,15 @@
+---
+# ノード5: 報告（成功経路・失敗経路の両方から合流する）
+# 学習ポイント:
+#   - どちらの経路から来ても1回だけ走る（収束 = any）
+#   - AWX が自動で注入する awx_workflow_job_id などの変数も見てみる
+- name: "05 report"
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: 最終報告
+      ansible.builtin.debug:
+        msg:
+          - "workflow_job_id = {{ awx_workflow_job_id | default('（AWX外で実行）') }}"
+          - "build_id        = {{ build_id | default('（届いていない）') }}"
+          - "deploy_result   = {{ deploy_result | default('（届いていない）') }}"
